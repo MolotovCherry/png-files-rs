@@ -1,5 +1,7 @@
 # Png Files
-Hide files inside PNG images, or retrieve them
+Hide files inside PNG images, or retrieve them.
+
+This is also optimized to use as few allocations as possible in order to have save on speed. Big allocations are done only for the files you are reading/inserting, and ignores all other files stored in the image. In this way it can stay fast, and you pay only for what you use.
 
 ## ⚠️ Safety Warning ⚠️
 Do not rely on this for anything that requires security! This is not encrypted and can be easily decoded by knowlegeable persons (in fact, the same program can be used). Keys are visible in the file if you use a plaintext editor as well. 
