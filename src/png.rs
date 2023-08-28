@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     io::{Cursor, Read, Seek, Write},
-    ops::Range,
+    ops::{Deref, Range},
     rc::Rc,
 };
 
@@ -36,6 +36,7 @@ struct File<'a> {
 
 impl File<'_> {
     // Decode data contained with deflate
+    // While I'd love to make this a deref instead, there would be a hidden cost due to the vec allocation
     fn decode_data(&self) -> Result<Vec<u8>, PngFilesError> {
         let mut writer = DeflateDecoder::new(Vec::new());
         writer.write_all(&self.data)?;
@@ -55,9 +56,10 @@ struct PngChunk {
     len: u32,
 }
 
-impl PngChunk {
-    /// return byte slice of png chunk's data
-    fn as_data(&self) -> &[u8] {
+impl Deref for PngChunk {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
         use DataSource::*;
         match &self.source {
             Range { data, range } => &data[range.clone()],
@@ -107,20 +109,18 @@ enum DataSource {
 impl PngChunk {
     // output a perfect representation of the chunk in binary
     pub fn into_bytes(self) -> Vec<u8> {
-        let data = self.as_data();
-
         // 4 - len
         // 4 - chunk type
         // data len
         // 4 - crc
-        let mut chunk: Vec<u8> = Vec::with_capacity(4 + 4 + data.len() + 4);
+        let mut chunk: Vec<u8> = Vec::with_capacity(4 + 4 + (*self).len() + 4);
         // all numbers are BE
         // len
         chunk.extend_from_slice(&self.len.to_be_bytes());
         // chunk type
         chunk.extend_from_slice(self.chunk_type.as_bytes());
         // data
-        chunk.extend_from_slice(data);
+        chunk.extend_from_slice(&self);
         // crc
         chunk.extend_from_slice(&self.crc.to_be_bytes());
 
@@ -218,7 +218,7 @@ impl Png {
                 )))?;
             }
 
-            chunks.push(if chunk_type == CHUNK_TYPE {
+            let chunk = if chunk_type == CHUNK_TYPE {
                 // our special file chunk
                 let chunk_data = chunk_data.unwrap();
 
@@ -256,7 +256,9 @@ impl Png {
                     // this was originally u32, truncation is ok
                     len: len as u32,
                 }
-            });
+            };
+
+            chunks.push(chunk);
         }
 
         Ok(Self {
@@ -278,11 +280,7 @@ impl Png {
                     false
                 }
             })
-            .and_then(|c| {
-                Self::decode_file(c.as_data())
-                    .ok()
-                    .and_then(|f| f.decode_data().ok())
-            })
+            .and_then(|c| Self::decode_file(c).ok().and_then(|f| f.decode_data().ok()))
     }
 
     // note: decoded file is NOT deflate decoded in order to allow for slice borrow
