@@ -22,8 +22,8 @@ const PNG_HEADER: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 // 1101
 // ||||
 // |||+- Safe-to-copy bit is 1 (lowercase letter; bit 5 is 1)
-// ||+-- Reserved bit is 1     (lowercase letter; bit 5 is 1)
-// |+--- Private bit is 0      (uppercase letter; bit 5 is 0)
+// ||+-- Reserved bit is 1     (uppercase letter; bit 5 is 0)
+// |+--- Private bit is 0      (lowercase letter; bit 5 is 1)
 // +---- Ancillary bit is 1    (lowercase letter; bit 5 is 1)
 const CHUNK_TYPE: &str = "fiLe";
 
@@ -134,130 +134,127 @@ impl Png {
         let data = Rc::new(data);
 
         // enclose in scope to make sure borrow is dropped
-        let chunks = {
-            let mut cursor = Cursor::new(&**data);
 
-            // skip the header
-            //
-            // Refer to the PNG file spec
-            // http://www.libpng.org/pub/png/spec/1.2/PNG-Structure.html
-            //
+        let mut cursor = Cursor::new(&**data);
 
-            let mut buf_res = [0; PNG_HEADER.len()];
-            cursor.read_exact(&mut buf_res)?;
+        // validate header
+        //
+        // Refer to the PNG file spec
+        // http://www.libpng.org/pub/png/spec/1.2/PNG-Structure.html
+        //
 
-            if PNG_HEADER != buf_res {
-                Err(PngFilesError::Msg("Input file is not PNG format"))?;
+        let mut buf_res = [0; PNG_HEADER.len()];
+        cursor.read_exact(&mut buf_res)?;
+
+        if PNG_HEADER != buf_res {
+            Err(PngFilesError::Msg("Input file is not PNG format"))?;
+        }
+
+        let mut chunks = Vec::new();
+
+        loop {
+            if cursor.position() as usize >= file_len {
+                break;
             }
 
-            let mut chunks = Vec::new();
+            let len: usize = cursor
+                .read_u32::<BigEndian>()
+                .map_err(|_| PngFilesError::Msg("Failed to read len"))?
+                .try_into()
+                .map_err(|_| PngFilesError::Msg("Failed to convert len to usize"))?;
 
-            loop {
-                if cursor.position() as usize >= file_len {
-                    break;
-                }
+            let cur_pos: usize = cursor
+                .position()
+                .try_into()
+                .map_err(|_| PngFilesError::Msg("Failed to convert cursor pos to usize"))?;
 
-                let len: usize = cursor
-                    .read_u32::<BigEndian>()
-                    .map_err(|_| PngFilesError::Msg("Failed to read len"))?
-                    .try_into()
-                    .map_err(|_| PngFilesError::Msg("Failed to convert len to usize"))?;
+            // borrow slice of type + data for crc check later
+            // chunk type - 4 bytes
+            // data len - variable
+            let crc_data = cursor
+                .get_ref()
+                .get(cur_pos..cur_pos + 4 + len)
+                .ok_or(PngFilesError::Msg("Invalid chunk (type or data missing)"))?;
+            let data_crc = crc32fast::hash(crc_data);
 
-                let cur_pos: usize = cursor
-                    .position()
-                    .try_into()
-                    .map_err(|_| PngFilesError::Msg("Failed to convert cursor pos to usize"))?;
+            let mut chunk_type = [0; 4];
+            cursor
+                .read_exact(&mut chunk_type)
+                .map_err(|_| PngFilesError::Msg("Failed to read chunk type"))?;
+            let chunk_type = std::str::from_utf8(&chunk_type)
+                .map_err(|_| PngFilesError::Msg("Invalid chunk type"))?;
 
-                // borrow slice of type + data for crc check later
-                // chunk type - 4 bytes
-                // data len - variable
-                let crc_data = cursor
-                    .get_ref()
-                    .get(cur_pos..cur_pos + 4 + len)
-                    .ok_or(PngFilesError::Msg("Invalid chunk (type or data missing)"))?;
-                let data_crc = crc32fast::hash(crc_data);
+            let range_pos: usize = cursor
+                .position()
+                .try_into()
+                .map_err(|_| PngFilesError::Msg("Failed to convert index to usize"))?;
+            let chunk_data = if chunk_type == CHUNK_TYPE {
+                // if it's a data chunk we're interested in, save the data
+                // slice the ref so we can borrow data instead of needing to allocate
+                Some(
+                    cursor
+                        .get_ref()
+                        .get(range_pos..range_pos + len)
+                        .ok_or(PngFilesError::Msg("fiLe data not found"))?,
+                )
+            } else {
+                None
+            };
 
-                let mut chunk_type = [0; 4];
-                cursor
-                    .read_exact(&mut chunk_type)
-                    .map_err(|_| PngFilesError::Msg("Failed to read chunk type"))?;
-                let chunk_type = std::str::from_utf8(&chunk_type)
-                    .map_err(|_| PngFilesError::Msg("Invalid chunk type"))?;
+            // skip past data section since we didn't advance cursor before
+            cursor.seek(std::io::SeekFrom::Current(len as i64))?;
 
-                let range_pos: usize = cursor
-                    .position()
-                    .try_into()
-                    .map_err(|_| PngFilesError::Msg("Failed to convert index to usize"))?;
-                let chunk_data = if chunk_type == CHUNK_TYPE {
-                    // if it's a data chunk we're interested in, save the data
-                    // slice the ref so we can borrow data instead of needing to allocate
-                    Some(
-                        cursor
-                            .get_ref()
-                            .get(range_pos..range_pos + len)
-                            .ok_or(PngFilesError::Msg("fiLe data not found"))?,
-                    )
-                } else {
-                    None
-                };
+            let crc = cursor
+                .read_u32::<BigEndian>()
+                .map_err(|_| PngFilesError::Msg("Failed to read crc"))?;
 
-                // skip past data section since we didn't advance cursor before
-                cursor.seek(std::io::SeekFrom::Current(len as i64))?;
-
-                let crc = cursor
-                    .read_u32::<BigEndian>()
-                    .map_err(|_| PngFilesError::Msg("Failed to read crc"))?;
-
-                // validate chunk, cause why not
-                if data_crc != crc {
-                    Err(PngFilesError::Msg(
-                        "Crc check failed; PNG file is corrupted",
-                    ))?;
-                }
-
-                chunks.push(if chunk_type == CHUNK_TYPE {
-                    // our special file chunk
-                    let chunk_data = chunk_data.unwrap();
-
-                    let file = Self::decode_file(chunk_data)?;
-
-                    PngChunk {
-                        chunk_type: ChunkType::File {
-                            key: file.key.to_owned(),
-                        },
-
-                        source: DataSource::Range {
-                            data: data.clone(),
-                            range: Range {
-                                start: range_pos,
-                                end: range_pos + len,
-                            },
-                        },
-
-                        crc,
-                        // this was originally u32, truncation is ok
-                        len: len as u32,
-                    }
-                } else {
-                    // regular chunk
-                    PngChunk {
-                        chunk_type: ChunkType::Png(chunk_type.to_owned()),
-                        source: DataSource::Range {
-                            data: data.clone(),
-                            range: Range {
-                                start: range_pos,
-                                end: range_pos + len,
-                            },
-                        },
-                        crc,
-                        // this was originally u32, truncation is ok
-                        len: len as u32,
-                    }
-                });
+            // validate chunk, cause why not
+            if data_crc != crc {
+                Err(PngFilesError::Msg(
+                    "Crc check failed; PNG file is corrupted",
+                ))?;
             }
 
-            chunks
-        };
+            chunks.push(if chunk_type == CHUNK_TYPE {
+                // our special file chunk
+                let chunk_data = chunk_data.unwrap();
+
+                let file = Self::decode_file(chunk_data)?;
+
+                PngChunk {
+                    chunk_type: ChunkType::File {
+                        key: file.key.to_owned(),
+                    },
+
+                    source: DataSource::Range {
+                        data: data.clone(),
+                        range: Range {
+                            start: range_pos,
+                            end: range_pos + len,
+                        },
+                    },
+
+                    crc,
+                    // this was originally u32, truncation is ok
+                    len: len as u32,
+                }
+            } else {
+                // regular chunk
+                PngChunk {
+                    chunk_type: ChunkType::Png(chunk_type.to_owned()),
+                    source: DataSource::Range {
+                        data: data.clone(),
+                        range: Range {
+                            start: range_pos,
+                            end: range_pos + len,
+                        },
+                    },
+                    crc,
+                    // this was originally u32, truncation is ok
+                    len: len as u32,
+                }
+            });
+        }
 
         Ok(Self {
             chunks,
@@ -390,7 +387,7 @@ impl Png {
     }
 
     pub fn into_bytes(self) -> Vec<u8> {
-        // the capacity could be less, but at a minimum
+        // the capacity could be more, but at a minimum
         let mut bytes = Vec::with_capacity(self.capacity);
 
         bytes.extend_from_slice(PNG_HEADER);
