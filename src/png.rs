@@ -147,7 +147,9 @@ impl Png {
         cursor.read_exact(&mut buf_res)?;
 
         if PNG_HEADER != buf_res {
-            Err(PngFilesError::Msg("Input file is not PNG format"))?;
+            Err(PngFilesError::Msg(Cow::Borrowed(
+                "Input file is not PNG format",
+            )))?;
         }
 
         let mut chunks = Vec::new();
@@ -159,35 +161,36 @@ impl Png {
 
             let len: usize = cursor
                 .read_u32::<BigEndian>()
-                .map_err(|_| PngFilesError::Msg("Failed to read len"))?
+                .map_err(|_| PngFilesError::Msg(Cow::Borrowed("Failed to read len")))?
                 .try_into()
-                .map_err(|_| PngFilesError::Msg("Failed to convert len to usize"))?;
+                .map_err(|_| PngFilesError::Msg(Cow::Borrowed("Failed to convert len to usize")))?;
 
-            let cur_pos: usize = cursor
-                .position()
-                .try_into()
-                .map_err(|_| PngFilesError::Msg("Failed to convert cursor pos to usize"))?;
+            let cur_pos: usize = cursor.position().try_into().map_err(|_| {
+                PngFilesError::Msg(Cow::Borrowed("Failed to convert cursor pos to usize"))
+            })?;
 
             // borrow slice of type + data for crc check later
             // chunk type - 4 bytes
             // data len - variable
-            let crc_data = cursor
-                .get_ref()
-                .get(cur_pos..cur_pos + 4 + len)
-                .ok_or(PngFilesError::Msg("Invalid chunk (type or data missing)"))?;
+            let crc_data =
+                cursor
+                    .get_ref()
+                    .get(cur_pos..cur_pos + 4 + len)
+                    .ok_or(PngFilesError::Msg(Cow::Borrowed(
+                        "Invalid chunk (type or data missing)",
+                    )))?;
             let data_crc = crc32fast::hash(crc_data);
 
             let mut chunk_type = [0; 4];
             cursor
                 .read_exact(&mut chunk_type)
-                .map_err(|_| PngFilesError::Msg("Failed to read chunk type"))?;
+                .map_err(|_| PngFilesError::Msg(Cow::Borrowed("Failed to read chunk type")))?;
             let chunk_type = std::str::from_utf8(&chunk_type)
-                .map_err(|_| PngFilesError::Msg("Invalid chunk type"))?;
+                .map_err(|_| PngFilesError::Msg(Cow::Borrowed("Invalid chunk type")))?;
 
-            let range_pos: usize = cursor
-                .position()
-                .try_into()
-                .map_err(|_| PngFilesError::Msg("Failed to convert index to usize"))?;
+            let range_pos: usize = cursor.position().try_into().map_err(|_| {
+                PngFilesError::Msg(Cow::Borrowed("Failed to convert index to usize"))
+            })?;
             let chunk_data = if chunk_type == CHUNK_TYPE {
                 // if it's a data chunk we're interested in, save the data
                 // slice the ref so we can borrow data instead of needing to allocate
@@ -195,7 +198,7 @@ impl Png {
                     cursor
                         .get_ref()
                         .get(range_pos..range_pos + len)
-                        .ok_or(PngFilesError::Msg("fiLe data not found"))?,
+                        .ok_or(PngFilesError::Msg(Cow::Borrowed("fiLe data not found")))?,
                 )
             } else {
                 None
@@ -206,13 +209,13 @@ impl Png {
 
             let crc = cursor
                 .read_u32::<BigEndian>()
-                .map_err(|_| PngFilesError::Msg("Failed to read crc"))?;
+                .map_err(|_| PngFilesError::Msg(Cow::Borrowed("Failed to read crc")))?;
 
             // validate chunk, cause why not
             if data_crc != crc {
-                Err(PngFilesError::Msg(
+                Err(PngFilesError::Msg(Cow::Borrowed(
                     "Crc check failed; PNG file is corrupted",
-                ))?;
+                )))?;
             }
 
             chunks.push(if chunk_type == CHUNK_TYPE {
@@ -343,7 +346,7 @@ impl Png {
 
         // check that no key already exists in data
         if !replace && idx.is_some() {
-            Err(PngFilesError::Msg("Key already in use"))?;
+            Err(PngFilesError::Msg(Cow::Borrowed("Key already in use")))?;
         }
 
         let file = File {
@@ -362,9 +365,9 @@ impl Png {
         let len = data.len();
 
         if len > u32::MAX as usize {
-            Err(PngFilesError::Msg(
+            Err(PngFilesError::Msg(Cow::Borrowed(
                 "Data cannot be bigger than u32::MAX bytes",
-            ))?;
+            )))?;
         }
 
         let chunk = PngChunk {
