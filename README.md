@@ -1,6 +1,9 @@
 # Png Files
 Hide files inside PNG images, or retrieve them
 
+## ⚠️ Safety Warning ⚠️
+Do not rely on this for anything that requires security! This is not encrypted and can be easily decoded by knowlegeable persons (in fact, the same program can be used). Keys are visible in the file if you use a plaintext editor as well. 
+
 # Cli flags
 | flag          | Description                                                                                                                                           |
 |---------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
