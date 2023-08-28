@@ -22,8 +22,8 @@ const PNG_HEADER: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 // 1101
 // ||||
 // |||+- Safe-to-copy bit is 1 (lowercase letter; bit 5 is 1)
-// ||+-- Reserved bit is 1     (uppercase letter; bit 5 is 0)
-// |+--- Private bit is 0      (lowercase letter; bit 5 is 1)
+// ||+-- Reserved bit is 0     (uppercase letter; bit 5 is 0)
+// |+--- Private bit is 1      (lowercase letter; bit 5 is 1)
 // +---- Ancillary bit is 1    (lowercase letter; bit 5 is 1)
 const CHUNK_TYPE: &str = "fiLe";
 
